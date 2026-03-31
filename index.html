@@ -3519,10 +3519,10 @@
             let selectionHint = null;
             let selectionControls = null;
             
-            // 新插件图片识别函数
-            async function recognizeWithNewPlugin(imageData) {
+            // 火山引擎图片识别函数
+            async function recognizeWithVolcanoEngine(imageData) {
                 detectionLoading.classList.add('active');
-                detectionStatus.textContent = '正在使用新插件识别物品...';
+                detectionStatus.textContent = '正在使用火山引擎识别物品...';
                 
                 try {
                     // 将图片转换为base64
@@ -3533,19 +3533,37 @@
                     ctx.drawImage(imageData, 0, 0);
                     const base64Image = canvas.toDataURL('image/jpeg').split(',')[1];
                     
-                    // 这里使用新插件的API进行识别
-                    // 示例：使用通用的物体识别API
-                    // 注意：请替换为实际的API URL和API密钥
-                    const response = await fetch('https://api.example.com/object-detection', {
+                    // 使用火山方舟API（豆包视觉模型）
+                    const response = await fetch('https://ark.cn-beijing.volces.com/api/v3/responses', {
                         method: 'POST',
                         headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': 'Bearer YOUR_API_KEY' // 替换为新插件的API密钥
+                            'Authorization': 'Bearer 23cc5b4b-07e1-4d75-bcdf-3404545351b6',
+                            'Content-Type': 'application/json'
                         },
                         body: JSON.stringify({
-                            image: base64Image,
-                            width: imageData.width,
-                            height: imageData.height
+                            "model": "doubao-seed-2-0-pro-260215",
+                            "input": [
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {
+                                            "type": "input_image",
+                                            "image_url": `data:image/jpeg;base64,${base64Image}`
+                                        },
+                                        {
+                                            "type": "input_text",
+                                            "text": `请识别图片中所有具体的物品，并返回它们的名称和位置坐标。
+                                            图片尺寸为：宽${imageData.width}px，高${imageData.height}px。
+                                            要求：
+                                            1. 以JSON数组格式返回，不要返回任何其他文字
+                                            2. 每个物品格式为：{"name": "物品名称", "x": 左上角x坐标, "y": 左上角y坐标, "width": 宽度, "height": 高度}
+                                            3. 坐标单位为像素，相对于图片左上角
+                                            4. 只返回JSON数组，不要添加任何解释、编号或markdown代码块
+                                            示例：[{"name": "树木", "x": 100, "y": 50, "width": 200, "height": 300}]`
+                                        }
+                                    ]
+                                }
+                            ]
                         })
                     });
                     
@@ -3554,17 +3572,42 @@
                     }
                     
                     const data = await response.json();
-                    
-                    // 转换为统一格式
-                    const results = data.objects.map(item => ({
-                        class: item.name,
-                        score: item.confidence || 0.95,
-                        bbox: [item.x, item.y, item.width, item.height]  // [x, y, width, height]
-                    }));
-                    
-                    return results;
+                    // 找到 type 为 "message" 的输出项（跳过 reasoning 推理过程）
+                    // ✅ 新的解析逻辑（替换两个函数里原来的解析部分）
+                    const messageOutput = data.output.find(item => item.type === 'message');
+
+                    if (messageOutput && messageOutput.content && messageOutput.content[0]) {
+                        let content = messageOutput.content[0].text.trim();
+                        
+                        // 清理可能的markdown代码块包裹
+                        content = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+                        
+                        let objectsData;
+                        try {
+                            objectsData = JSON.parse(content);
+                        } catch (e) {
+                            // JSON解析失败时，尝试提取JSON数组部分
+                            const jsonMatch = content.match(/$$[\s\S]*$$/);
+                            if (jsonMatch) {
+                                objectsData = JSON.parse(jsonMatch[0]);
+                            } else {
+                                throw new Error('返回格式解析失败');
+                            }
+                        }
+                        
+                        // 转换为统一格式
+                        const results = objectsData.map(item => ({
+                            class: item.name,
+                            score: 0.95,
+                            bbox: [item.x, item.y, item.width, item.height]  // [x, y, width, height]
+                        }));
+                        
+                        return results;
+                    } else {
+                        throw new Error('API返回格式错误');
+                    }
                 } catch (error) {
-                    console.error('新插件识别失败:', error);
+                    console.error('火山引擎识别失败:', error);
                     throw error;
                 } finally {
                     detectionLoading.classList.remove('active');
@@ -3605,14 +3648,14 @@
                                 detectionStatus.textContent = `模型加载失败，${retries}秒后重试...`;
                                 await new Promise(resolve => setTimeout(resolve, 3000));
                             } else {
-                                detectionStatus.textContent = '模型加载失败，使用新插件';
+                                detectionStatus.textContent = '模型加载失败，使用火山引擎API';
                                 detectionLoading.classList.remove('active');
                             }
                         }
                     }
                     
-                    // 模型加载失败，使用新插件
-                    console.warn('使用新插件进行识别');
+                    // 模型加载失败，使用火山引擎API
+                    console.warn('使用火山引擎API进行识别');
                     return false;
                 }
                 return true;
@@ -3653,14 +3696,14 @@
                     const existingBboxes = imageCanvasWrapper.querySelectorAll('.object-bbox');
                     existingBboxes.forEach(bbox => bbox.remove());
                     
-                    // 优先使用新插件API进行精准识别
+                    // 优先使用火山引擎API进行精准识别
                     try {
-                        detectionStatus.textContent = '正在使用新插件识别...';
-                        detectedObjects = await recognizeWithNewPlugin(currentImage);
-                    } catch (pluginError) {
-                        console.warn('新插件识别失败，使用COCO-SSD模型:', pluginError);
+                        detectionStatus.textContent = '正在使用火山引擎识别...';
+                        detectedObjects = await recognizeWithVolcanoEngine(currentImage);
+                    } catch (arkError) {
+                        console.warn('火山引擎识别失败，使用COCO-SSD模型:', arkError);
                         
-                        // 新插件API失败，尝试使用COCO-SSD模型
+                        // 火山方舟API失败，尝试使用COCO-SSD模型
                         if (cocoSsdModel) {
                             detectionStatus.textContent = '使用COCO-SSD模型识别...';
                             const predictions = await cocoSsdModel.detect(currentImage);
@@ -4029,10 +4072,10 @@
                 document.getElementById('cancel-selection').addEventListener('click', cancelSelection);
             }
             
-            // 新插件框选识别函数
-            async function recognizeWithNewPluginSelection(imageData, selection) {
+            // 火山引擎框选识别函数
+            async function recognizeWithVolcanoEngineSelection(imageData, selection) {
                 detectionLoading.classList.add('active');
-                detectionStatus.textContent = '正在使用新插件识别框选物品...';
+                detectionStatus.textContent = '正在使用火山引擎识别框选物品...';
                 
                 try {
                     // 将图片转换为base64
@@ -4043,23 +4086,38 @@
                     ctx.drawImage(imageData, 0, 0);
                     const base64Image = canvas.toDataURL('image/jpeg').split(',')[1];
                     
-                    // 这里使用新插件的API进行框选识别
-                    const response = await fetch('https://api.example.com/object-detection', {
+                    // 使用火山方舟API（豆包视觉模型）
+                    const response = await fetch('https://ark.cn-beijing.volces.com/api/v3/responses', {
                         method: 'POST',
                         headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': 'Bearer YOUR_API_KEY' // 替换为新插件的API密钥
+                            'Authorization': 'Bearer 23cc5b4b-07e1-4d75-bcdf-3404545351b6',
+                            'Content-Type': 'application/json'
                         },
                         body: JSON.stringify({
-                            image: base64Image,
-                            width: imageData.width,
-                            height: imageData.height,
-                            selection: {
-                                left: Math.round(selection.left),
-                                top: Math.round(selection.top),
-                                width: Math.round(selection.width),
-                                height: Math.round(selection.height)
-                            }
+                            "model": "doubao-seed-2-0-pro-260215",
+                            "input": [
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {
+                                            "type": "input_image",
+                                            "image_url": `data:image/jpeg;base64,${base64Image}`
+                                        },
+                                        {
+                                            "type": "input_text",
+                                            "text": `请识别图片中以下框选区域内的具体物品，并返回它们的名称和位置坐标。
+                                            框选区域：左${Math.round(selection.left)}px，上${Math.round(selection.top)}px，宽${Math.round(selection.width)}px，高${Math.round(selection.height)}px。
+                                            图片尺寸为：宽${imageData.width}px，高${imageData.height}px。
+                                            要求：
+                                            1. 以JSON数组格式返回，不要返回任何其他文字
+                                            2. 每个物品格式为：{"name": "物品名称", "x": 左上角x坐标, "y": 左上角y坐标, "width": 宽度, "height": 高度}
+                                            3. 坐标单位为像素，相对于图片左上角
+                                            4. 只返回JSON数组，不要添加任何解释、编号或markdown代码块
+                                            示例：[{"name": "树木", "x": 100, "y": 50, "width": 200, "height": 300}]`
+                                        }
+                                    ]
+                                }
+                            ]
                         })
                     });
                     
@@ -4067,18 +4125,44 @@
                         throw new Error(`API请求失败: ${response.status}`);
                     }
                     
+                    // ✅ 修改后的代码
                     const data = await response.json();
-                    
-                    // 转换为统一格式
-                    const results = data.objects.map(item => ({
-                        class: item.name,
-                        score: item.confidence || 0.95,
-                        bbox: [item.x, item.y, item.width, item.height]  // [x, y, width, height]
-                    }));
-                    
-                    return results;
+
+                    // ✅ 新的解析逻辑（替换两个函数里原来的解析部分）
+                    const messageOutput = data.output.find(item => item.type === 'message');
+
+                    if (messageOutput && messageOutput.content && messageOutput.content[0]) {
+                        let content = messageOutput.content[0].text.trim();
+                        
+                        // 清理可能的markdown代码块包裹
+                        content = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+                        
+                        let objectsData;
+                        try {
+                            objectsData = JSON.parse(content);
+                        } catch (e) {
+                            // JSON解析失败时，尝试提取JSON数组部分
+                            const jsonMatch = content.match(/$$[\s\S]*$$/);
+                            if (jsonMatch) {
+                                objectsData = JSON.parse(jsonMatch[0]);
+                            } else {
+                                throw new Error('返回格式解析失败');
+                            }
+                        }
+                        
+                        // 转换为统一格式
+                        const results = objectsData.map(item => ({
+                            class: item.name,
+                            score: 0.95,
+                            bbox: [item.x, item.y, item.width, item.height]  // [x, y, width, height]
+                        }));
+                        
+                        return results;
+                    } else {
+                        throw new Error('API返回格式错误');
+                    }
                 } catch (error) {
-                    console.error('新插件框选识别失败:', error);
+                    console.error('火山引擎框选识别失败:', error);
                     throw error;
                 } finally {
                     detectionLoading.classList.remove('active');
@@ -4108,19 +4192,19 @@
                 detectionStatus.textContent = '正在识别框选区域内的物品...';
                 
                 try {
-                    // 优先使用新插件API进行精准识别
+                    // 优先使用火山引擎API进行精准识别
                     try {
-                        detectionStatus.textContent = '正在使用新插件识别...';
-                        detectedObjects = await recognizeWithNewPluginSelection(currentImage, {
+                        detectionStatus.textContent = '正在使用火山引擎识别...';
+                        detectedObjects = await recognizeWithVolcanoEngineSelection(currentImage, {
                             left: left,
                             top: top,
                             width: width,
                             height: height
                         });
-                    } catch (pluginError) {
-                        console.warn('新插件识别失败，使用COCO-SSD模型:', pluginError);
+                    } catch (arkError) {
+                        console.warn('火山引擎识别失败，使用COCO-SSD模型:', arkError);
                         
-                        // 新插件API失败，尝试使用COCO-SSD模型
+                        // 火山方舟API失败，尝试使用COCO-SSD模型
                         if (cocoSsdModel) {
                             detectionStatus.textContent = '使用COCO-SSD模型识别...';
                             const predictions = await cocoSsdModel.detect(currentImage);
@@ -4451,75 +4535,8 @@
                 };
                 reader.readAsDataURL(file);
             }
-            // 生成分享网址
-            function generateShareUrl() {
-                // 获取当前翻译内容和语言设置
-                const sourceText = sourceTextArea.value;
-                const sourceLang = sourceLanguage.value;
-                const targetLang = targetLanguage.value;
-                
-                // 构建分享URL
-                const baseUrl = window.location.origin + window.location.pathname;
-                const params = new URLSearchParams({
-                    text: sourceText,
-                    from: sourceLang,
-                    to: targetLang
-                });
-                
-                const shareUrl = `${baseUrl}?${params.toString()}`;
-                
-                // 复制到剪贴板
-                navigator.clipboard.writeText(shareUrl)
-                    .then(() => {
-                        showToast('分享链接已复制到剪贴板', 'success');
-                    })
-                    .catch(err => {
-                        console.error('复制失败:', err);
-                        showToast('复制失败，请手动复制', 'error');
-                    });
-            }
-            
-            // 初始化分享按钮
-            function initShareButton() {
-                const shareButton = document.createElement('button');
-                shareButton.className = 'mdl-button mdl-js-button mdl-button--raised mdl-js-ripple-effect mdl-color--indigo mdl-color-text--white';
-                shareButton.style.marginTop = '10px';
-                shareButton.innerHTML = '<i class="material-icons">share</i> 生成分享链接';
-                shareButton.addEventListener('click', generateShareUrl);
-                
-                // 添加到页面
-                const buttonContainer = document.querySelector('.mdl-card__actions');
-                if (buttonContainer) {
-                    buttonContainer.appendChild(shareButton);
-                }
-            }
-            
-            // 处理URL参数
-            function handleUrlParams() {
-                const params = new URLSearchParams(window.location.search);
-                const text = params.get('text');
-                const from = params.get('from');
-                const to = params.get('to');
-                
-                if (text) {
-                    sourceTextArea.value = text;
-                }
-                if (from) {
-                    sourceLanguage.value = from;
-                }
-                if (to) {
-                    targetLanguage.value = to;
-                }
-            }
-            
             // 页面加载时渲染已有历史
             renderHistory();
-            
-            // 初始化分享按钮
-            initShareButton();
-            
-            // 处理URL参数
-            handleUrlParams();
         });
     </script>
 </body>
